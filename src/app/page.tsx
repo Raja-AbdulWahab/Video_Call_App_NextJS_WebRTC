@@ -1,103 +1,193 @@
-import Image from "next/image";
+"use client";
+
+import React, { useState, useRef, useEffect } from "react";
+import useSignaling from "./hooks/useSignaling";
+import UserList from "./components/UserList";
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [room, setRoom] = useState("");
+  const [name, setName] = useState("");
+  const [joined, setJoined] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+  return (
+    <div className="p-6 min-h-screen bg-gray-100">
+      {!joined ? (
+        <div className="max-w-md mx-auto bg-white p-6 rounded-lg shadow space-y-4">
+          <h1 className="text-2xl font-semibold text-center">
+            Join or Create a Room
+          </h1>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Your name"
+            className="w-full p-2 border rounded"
+          />
+          <input
+            value={room}
+            onChange={(e) => setRoom(e.target.value)}
+            placeholder="Room ID"
+            className="w-full p-2 border rounded"
+          />
+          <button
+            onClick={() => {
+              if (!name.trim() || !room.trim())
+                return alert("Please enter both name and room ID");
+              setJoined(true);
+            }}
+            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            Join
+          </button>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+      ) : (
+        <Room roomId={room} username={name} />
+      )}
+    </div>
+  );
+}
+
+function Room({
+  roomId,
+  username,
+}: {
+  roomId: string;
+  username: string;
+}) {
+  const hook = useSignaling(roomId, username);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+
+  // ✅ FIX 1 — ensure local video stream displays even in Edge
+  useEffect(() => {
+    (async () => {
+      try {
+        const stream = await hook.ensureLocalStream();
+        if (stream && localVideoRef.current) {
+          // clone for compatibility (Edge sometimes blocks reused MediaStream)
+          const clone = stream.clone();
+          localVideoRef.current.srcObject = clone;
+          localVideoRef.current.muted = true;
+          localVideoRef.current.playsInline = true;
+
+          const playPromise = localVideoRef.current.play();
+          if (playPromise !== undefined) {
+            playPromise.catch((err) => {
+              console.warn("⚠️ Local video play() failed:", err);
+            });
+          }
+        }
+      } catch (err) {
+        console.error("🎥 Failed to load local stream:", err);
+      }
+    })();
+  }, [hook]);
+
+  // ✅ FIX 2 — safely attach remote stream (handle autoplay blocking)
+  useEffect(() => {
+    if (!hook.remoteStream || !remoteVideoRef.current) return;
+    const el = remoteVideoRef.current;
+    el.srcObject = hook.remoteStream;
+    el.playsInline = true;
+
+    const tryPlay = async () => {
+      try {
+        await el.play();
+      } catch (err) {
+        console.warn("⚠️ Remote video play() blocked, retrying...");
+        el.onloadedmetadata = () => el.play().catch(() => {});
+      }
+    };
+    tryPlay();
+  }, [hook.remoteStream]);
+
+  return (
+    <div className="grid grid-cols-3 gap-4 mt-6">
+      <div className="col-span-2 bg-white p-4 rounded-lg shadow">
+        <h2 className="text-xl font-semibold mb-2">Video Call</h2>
+        <div className="flex flex-col gap-4">
+          <video
+            ref={localVideoRef}
+            autoPlay
+            muted
+            playsInline
+            className="w-full rounded bg-black"
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            className="w-full rounded bg-black"
           />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+        </div>
+      </div>
+
+      <aside className="space-y-4">
+        <UserList
+          users={hook.users}
+          username={username}
+          onCall={(u) =>
+            hook.callUser(u, (remoteStream: MediaStream) => {
+              if (remoteVideoRef.current) {
+                remoteVideoRef.current.srcObject = remoteStream;
+                remoteVideoRef.current
+                  .play()
+                  .catch((err) => console.warn("⚠️ Remote video play() failed:", err));
+              }
+            })
+          }
+        />
+        <ChatBox hook={hook} username={username} roomId={roomId} />
+      </aside>
+    </div>
+  );
+}
+
+function ChatBox({
+  hook,
+  username,
+  roomId,
+}: {
+  hook: ReturnType<typeof useSignaling>;
+  username: string;
+  roomId: string;
+}) {
+  const [text, setText] = useState("");
+
+  return (
+    <div className="p-4 bg-white rounded-lg shadow">
+      <h3 className="font-medium mb-2">Chat</h3>
+      <div className="border rounded p-2 mb-3 h-48 overflow-auto bg-gray-50">
+        {hook.chats.length === 0 ? (
+          <p className="text-gray-500 text-sm text-center mt-10">
+            No messages yet
+          </p>
+        ) : (
+          hook.chats.map((c, i) => (
+            <div key={i} className="mb-1">
+              <strong>{c.from}:</strong> {c.text}
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="flex gap-2">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          className="flex-1 p-2 border rounded"
+          placeholder="Type a message..."
+        />
+        <button
+          className="bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700"
+          onClick={() => {
+            if (!text.trim()) return;
+            hook.sendChat(text.trim());
+            setText("");
+          }}
         >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+          Send
+        </button>
+      </div>
     </div>
   );
 }
